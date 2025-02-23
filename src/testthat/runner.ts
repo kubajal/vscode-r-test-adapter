@@ -1,8 +1,6 @@
-import * as util from "util";
 import * as path from "path";
 import * as winreg from "winreg";
 import * as fs from "fs";
-import * as tmp from "tmp-promise";
 import { spawn } from "child_process";
 import * as vscode from "vscode";
 import * as split2 from "split2";
@@ -12,9 +10,7 @@ import { appendFile as _appendFile } from "fs";
 import { lookpath } from "lookpath";
 import { TestResult } from "./reporter";
 import testthatParser from "./parser";
-import { v4 as uuid } from "uuid";
 
-const appendFile = util.promisify(_appendFile);
 const testReporterPath = path
     .join(__dirname, "..", "..", "..", "src", "testthat", "reporter")
     .replace(/\\/g, "/");
@@ -38,15 +34,10 @@ async function runTest(
             }
             // Run the file - it is faster than running tests one by one
             testingTools.log.info("Run test file as a whole.");
-            return runSingleTestFile(testingTools, run, test, test.uri!.fsPath, false);
+            return runSingleTestFile(testingTools, run, test, false);
         case ItemType.TestCase:
-            if (test.children.size === 0) {
-                testingTools.log.info("Test type is test case and a single test");
-                return runSingleTest(testingTools, run, test);
-            } else {
-                testingTools.log.info("Test type is test case and a describe suite");
-                return runDescribeTestSuite(testingTools, run, test);
-            }
+            testingTools.log.info("Test type is test case and a single test");
+            return runSingleTest(testingTools, run, test);
     }
 }
 
@@ -54,9 +45,12 @@ async function runSingleTestFile(
     testingTools: TestingTools,
     run: vscode.TestRun,
     test: vscode.TestItem,
-    filePath: string,
     isSingleTest: boolean
 ): Promise<string> {
+    const filePath = test.uri ? test.uri.fsPath : null;
+    if (filePath === null) {
+        throw Error("Could not get the current test path");
+    }
     testingTools.log.info(
         `Started running${isSingleTest ? " single" : ""} test file in path ${filePath}`
     );
@@ -68,14 +62,19 @@ async function runSingleTestFile(
         return Promise.reject(
             Error(
                 "Devtools version too old. RTestAdapter requires devtools>=2.3.2" +
-                    "to be installed in the Rscript environment"
+                "to be installed in the Rscript environment"
             )
         );
     }
-    let devtoolsMethod = major == 2 && minor < 4 ? "test_file" : "test_active_file";
+    const workspaceFolder = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0] : null;
+    if (workspaceFolder === null) {
+        throw Error("Could not get the current workspace folder");
+    }
+    // const testLabel = test.label
     let devtoolsCall =
         `devtools::load_all('${testReporterPath}');` +
-        `devtools::${devtoolsMethod}('${cleanFilePath}',reporter=VSCodeReporter)`;
+        `devtools::load_all('${workspaceFolder.uri.fsPath}');` +
+        `testthat::test_file('${filePath}',desc='${test.label}',reporter=VSCodeReporter)`;
     let command = `${RscriptCommand} -e "${devtoolsCall}"`;
     let cwd = projectDirMatch
         ? projectDirMatch[1]
@@ -107,9 +106,9 @@ async function runSingleTestFile(
                             let testItem = isSingleTest
                                 ? test
                                 : findTestRecursively(
-                                      encodeNodeId(test.uri!.fsPath, data.test),
-                                      test
-                                  );
+                                    encodeNodeId(test.uri!.fsPath, data.test),
+                                    test
+                                );
                             if (testItem === undefined)
                                 reject(
                                     `Test with id ${encodeNodeId(
@@ -126,9 +125,9 @@ async function runSingleTestFile(
                             let testItem = isSingleTest
                                 ? test
                                 : findTestRecursively(
-                                      encodeNodeId(test.uri!.fsPath, data.test),
-                                      test
-                                  );
+                                    encodeNodeId(test.uri!.fsPath, data.test),
+                                    test
+                                );
                             if (testItem === undefined)
                                 reject(
                                     `Test with id ${encodeNodeId(
@@ -196,115 +195,19 @@ function findTestRecursively(testIdToFind: string, testToSearch: vscode.TestItem
     return testFound;
 }
 
-async function runDescribeTestSuite(
-    testingTools: TestingTools,
-    run: vscode.TestRun,
-    test: vscode.TestItem
-) {
-    let documentUri = test.uri!;
-    let document = await vscode.workspace.openTextDocument(documentUri);
-    let source = document.getText();
-
-    let testFileItem = testingTools.controller.items.get(test.uri!.path)!;
-    testFileItem.children.forEach((siblingTest: vscode.TestItem) => {
-        let testRange = siblingTest.range!;
-        let testStartIndex = document.offsetAt(testRange.start);
-        let testEndIndex = document.offsetAt(testRange.end);
-        if (siblingTest.id != test.id) {
-            source =
-                source.slice(0, testStartIndex) +
-                " ".repeat(testEndIndex - testStartIndex) +
-                source.slice(testEndIndex);
-        }
-    });
-    source = source.slice(0, document.offsetAt(test.range!.end));
-
-    const testRunId = uuid();
-    let tmpFileName = `test-${testRunId}.R`;
-    let tmpFilePath = path.normalize(path.join(path.dirname(test.uri!.fsPath), tmpFileName));
-    // Do not clean up tempFilePaths, not possible to get around the race condition
-    testingTools.tempFilePaths.push(tmpFilePath);
-    // cleanup is not guaranteed to unlink the file immediately
-    let tmpFileResult = await tmp.file({
-        name: tmpFileName,
-        tmpdir: path.dirname(test.uri!.fsPath),
-    });
-    await appendFile(tmpFilePath, source);
-    return runSingleTestFile(testingTools, run, test, tmpFilePath, true)
-        .catch(async (err) => {
-            await tmpFileResult.cleanup();
-            throw err;
-        })
-        .then(async (value) => {
-            await tmpFileResult.cleanup();
-            return value;
-        });
-}
 
 async function runSingleTest(
     testingTools: TestingTools,
     run: vscode.TestRun,
     test: vscode.TestItem
 ) {
-    let documentUri = test.uri!;
-    let document = await vscode.workspace.openTextDocument(documentUri);
-    let source = document.getText();
-
-    let parentTest: vscode.TestItem | undefined;
-    let testFileItem = testingTools.controller.items.get(test.uri!.path)!;
-    testFileItem.children.forEach((siblingTest: vscode.TestItem) => {
-        let testRange = siblingTest.range!;
-        let testStartIndex = document.offsetAt(testRange.start);
-        let testEndIndex = document.offsetAt(testRange.end);
-        if (siblingTest.id != test.id) {
-            if (siblingTest.children.get(test.id) !== undefined) {
-                // Handle tests inside describe test suites
-                parentTest = siblingTest;
-                siblingTest.children.forEach((closeSiblingTest: vscode.TestItem) => {
-                    if (closeSiblingTest.id != test.id) {
-                        testRange = closeSiblingTest.range!;
-                        testStartIndex = document.offsetAt(testRange.start);
-                        testEndIndex = document.offsetAt(testRange.end);
-                        source =
-                            source.slice(0, testStartIndex) +
-                            " ".repeat(testEndIndex - testStartIndex) +
-                            source.slice(testEndIndex!);
-                    }
-                });
-            } else {
-                source =
-                    source.slice(0, testStartIndex) +
-                    " ".repeat(testEndIndex - testStartIndex) +
-                    source.slice(testEndIndex!);
-            }
-        }
-    });
-    let lastIndex;
-    if (parentTest !== undefined) {
-        lastIndex = document.offsetAt(parentTest.range!.end);
-    } else {
-        lastIndex = document.offsetAt(test.range!.end);
-    }
-    source = source.slice(0, lastIndex);
-
-    const testRunId = uuid();
-    let tmpFileName = `test-${testRunId}.R`;
-    let tmpFilePath = path.normalize(path.join(path.dirname(test.uri!.fsPath), tmpFileName));
-    // Do not clean up tempFilePaths, not possible to get around the race condition
-    testingTools.tempFilePaths.push(tmpFilePath);
-    // cleanup is not guaranteed to unlink the file immediately
-    let tmpFileResult = await tmp.file({
-        name: tmpFileName,
-        tmpdir: path.dirname(test.uri!.fsPath),
-    });
-    await appendFile(tmpFilePath, source);
-    return runSingleTestFile(testingTools, run, test, tmpFilePath, true)
+    return runSingleTestFile(testingTools, run, test, true)
         .catch(async (err) => {
-            await tmpFileResult.cleanup();
+            run.appendOutput(err);
             throw err;
         })
         .then(async (value) => {
-            await tmpFileResult.cleanup();
+            run.appendOutput(value);
             return value;
         });
 }
@@ -319,7 +222,7 @@ async function getRscriptCommand(testingTools: TestingTools) {
         } else {
             testingTools.log.warn(
                 `Rscript path given in the configuration ${configPath} is invalid. ` +
-                    `Falling back to defaults.`
+                `Falling back to defaults.`
             );
         }
     }
@@ -362,7 +265,7 @@ async function getRscriptCommand(testingTools: TestingTools) {
                 RscriptPath = possibleRscriptPath;
                 return Promise.resolve(`"${RscriptPath}"`);
             }
-        } catch (e) {}
+        } catch (e) { }
     }
     throw Error("Rscript could not be found in PATH, cannot run the tests.");
 }
@@ -374,7 +277,7 @@ async function getDevtoolsVersion(
     return new Promise(async (resolve, reject) => {
         let childProcess = spawn(
             `${RscriptCommand} -e "suppressMessages(library('devtools'));` +
-                `packageVersion('devtools')"`,
+            `packageVersion('devtools')"`,
             {
                 shell: true,
             }
