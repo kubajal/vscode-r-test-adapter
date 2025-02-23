@@ -3,6 +3,21 @@ import { ItemFramework, ItemType, TestingTools } from "./util";
 import { discoverTestFiles, loadTestsFromFile } from "./loader";
 import { Log } from "vscode-test-adapter-util";
 import { runHandler } from "./runner";
+import * as util from "util";
+import { v4 as uuid } from "uuid";
+import * as path from "path";
+import * as tmp from "tmp-promise";
+import { appendFile as _appendFile } from "fs";
+const appendFile = util.promisify(_appendFile);
+
+const testReporterPath = path
+    .join(__dirname, "..", "..", "src", "testthat", "reporter")
+    .replace(/\\/g, "/");
+
+const workspaceFolder = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0] : null;
+if (workspaceFolder === null) {
+    throw Error("Could not get the current workspace folder");
+}
 
 export async function activate(context: vscode.ExtensionContext) {
     const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
@@ -50,5 +65,71 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.TestRunProfileKind.Run,
         (request, token) => runHandler(testingTools, request, token),
         true
+    );
+
+    controller.createRunProfile(
+        "Debug",
+        vscode.TestRunProfileKind.Debug,
+        async (request, token) => {
+            const includedTests = request.include ? request.include : [];
+            for (const test of includedTests) {
+                const testRunId = uuid();
+                let debuggerLoaderName = `.debugger-loader-${testRunId}.R`;
+                let workspaceFolder = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : null;
+                if (workspaceFolder === null) {
+                    throw Error("Could not get the workspace folder");
+                }
+                let debuggerLoaderPath = path.normalize(path.join(workspaceFolder, "/", debuggerLoaderName));
+                // Do not clean up tempFilePaths, not possible to get around the race condition
+                testingTools.tempFilePaths.push(debuggerLoaderPath);
+                // cleanup is not guaranteed to unlink the file immediately
+                tmp.file({
+                    name: debuggerLoaderName,
+                    tmpdir: workspaceFolder,
+                });
+                const debuggerLoaderBody = `
+                    testthat <- loadNamespace('testthat')
+
+                    # Save the original test_that function
+                    orig_test_that <- testthat::test_that
+
+                    unlockBinding('test_that', testthat)
+                    new_test_that <- function(desc, ...) {
+                    if (grepl("${test.label}", desc)) {
+                        orig_test_that(desc, ...)
+                      } else {
+                        message("Skipping test: ", desc)
+                      }
+                    }
+                    lockBinding('test_that', testthat)
+
+                    # Override in the testthat namespace
+                    assignInNamespace("test_that", new_test_that, ns = "testthat")
+                    # Optionally, update the global environment if necessary
+                    assign("test_that", new_test_that, envir = .GlobalEnv)
+
+                    devtools::load_all('${testReporterPath}')
+                    devtools::load_all('${workspaceFolder}')
+
+                    # Override test_that to only run tests whose description matches "test0"
+                    .vsc.debugSource('${test.uri?.fsPath}')
+                    q()
+                    `
+
+                await appendFile(debuggerLoaderPath, debuggerLoaderBody);
+                const debugConfig: vscode.DebugConfiguration = {
+                    type: 'R-Debugger',
+                    request: 'launch',
+                    name: `Debug Test: ${test.label} - ${testRunId}`,
+                    debugMode: "file",
+                    workingDirectory: workspaceFolder,
+                    includePackageScopes: true,
+                    loadPackages: ["."],
+                    file: debuggerLoaderPath,
+                };
+
+                await vscode.debug.startDebugging(undefined, debugConfig);
+            }
+        }
     );
 }
