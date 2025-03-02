@@ -22,7 +22,8 @@ function setRecursively(
 async function runHandler(
     testingTools: TestingTools,
     request: vscode.TestRunRequest,
-    token: vscode.CancellationToken
+    token: vscode.CancellationToken,
+    entryPointStrategy: (test: vscode.TestItem) => string
 ) {
     testingTools.log.info("Test run started.");
     const run = testingTools.controller.createTestRun(request);
@@ -61,7 +62,7 @@ async function runHandler(
         try {
             testingTools.log.info(`Running test with label ${test.label}`);
             test.busy = true;
-            let stdout = await runTest(testingTools, run, test);
+            let stdout = await runTest(testingTools, run, test, entryPointStrategy);
             test.busy = false;
             testingTools.log.debug(`Test output: ${stdout}`);
         } catch (error) {

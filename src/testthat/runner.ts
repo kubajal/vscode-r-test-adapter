@@ -11,15 +11,13 @@ import { lookpath } from "lookpath";
 import { TestResult } from "./reporter";
 import testthatParser from "./parser";
 
-const testReporterPath = path
-    .join(__dirname, "..", "..", "..", "src", "testthat", "reporter")
-    .replace(/\\/g, "/");
 let RscriptPath: string | undefined;
 
 async function runTest(
     testingTools: TestingTools,
     run: vscode.TestRun,
-    test: vscode.TestItem
+    test: vscode.TestItem,
+    entryPointStrategy: (test: vscode.TestItem) => string
 ): Promise<string> {
     const getType = (testItem: vscode.TestItem) =>
         testingTools.testItemData.get(testItem)!.itemType;
@@ -34,10 +32,10 @@ async function runTest(
             }
             // Run the file - it is faster than running tests one by one
             testingTools.log.info("Run test file as a whole.");
-            return runSingleTestFile(testingTools, run, test, false);
+            return runSingleTestFile(testingTools, run, test, false, entryPointStrategy);
         case ItemType.TestCase:
             testingTools.log.info("Test type is test case and a single test");
-            return runSingleTest(testingTools, run, test);
+            return runSingleTest(testingTools, run, test, entryPointStrategy);
     }
 }
 
@@ -45,7 +43,8 @@ async function runSingleTestFile(
     testingTools: TestingTools,
     run: vscode.TestRun,
     test: vscode.TestItem,
-    isSingleTest: boolean
+    isSingleTest: boolean,
+    entryPointStrategy: (test: vscode.TestItem) => string
 ): Promise<string> {
     const filePath = test.uri ? test.uri.fsPath : null;
     if (filePath === null) {
@@ -71,11 +70,8 @@ async function runSingleTestFile(
         throw Error("Could not get the current workspace folder");
     }
     // const testLabel = test.label
-    let devtoolsCall =
-        `devtools::load_all('${testReporterPath}');` +
-        `devtools::load_all('${workspaceFolder.uri.fsPath}');` +
-        `testthat::test_file('${filePath}',desc='${test.label}',reporter=VSCodeReporter)`;
-    let command = `${RscriptCommand} -e "${devtoolsCall}"`;
+    let entryPoint = entryPointStrategy(test);
+    let command = `${RscriptCommand} -e "${entryPoint}"`;
     let cwd = projectDirMatch
         ? projectDirMatch[1]
         : vscode.workspace.workspaceFolders![0].uri.fsPath;
@@ -199,9 +195,10 @@ function findTestRecursively(testIdToFind: string, testToSearch: vscode.TestItem
 async function runSingleTest(
     testingTools: TestingTools,
     run: vscode.TestRun,
-    test: vscode.TestItem
+    test: vscode.TestItem,
+    entryPointStrategy: (test: vscode.TestItem) => string
 ) {
-    return runSingleTestFile(testingTools, run, test, true)
+    return runSingleTestFile(testingTools, run, test, true, entryPointStrategy)
         .catch(async (err) => {
             run.appendOutput(err);
             throw err;

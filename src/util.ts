@@ -28,5 +28,6 @@ export interface TestParser {
 }
 
 export interface TestRunner {
-    (testingTools: TestingTools, run: vscode.TestRun, test: vscode.TestItem): Promise<string>;
+    (testingTools: TestingTools, run: vscode.TestRun, test: vscode.TestItem,
+        entryPointStrategy: (test: vscode.TestItem) => string): Promise<string>;
 }
