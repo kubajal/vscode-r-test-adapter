@@ -10,9 +10,9 @@
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}"
       ],
-      "outFiles": [
-        "${workspaceFolder}/out"
-      ]
+			"outFiles": [
+				"${workspaceFolder}/out/**/*.js"
+			],
     },
     {
       "name": "Extension Tests",
