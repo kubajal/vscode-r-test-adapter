@@ -70,6 +70,7 @@ function processReporterOutput(
 
         server
             .on("data", function (line: string) {
+                console.log("Received line: " + line);
                 runOutput += line + "\r\n";
                 let data: undefined | TestResult = undefined;
                 try {
