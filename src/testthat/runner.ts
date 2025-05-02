@@ -18,6 +18,8 @@ const appendFile = util.promisify(_appendFile);
 const testReporterPath = path
     .join(__dirname, "..", "..", "..", "src", "testthat", "reporter")
     .replace(/\\/g, "/");
+const workspaceFolder = vscode.workspace.workspaceFolders![0].uri.fsPath
+    .replace(/\\/g, "/");
 let RscriptPath: string | undefined;
 const HOST = "127.0.0.1";
 const PORT = 8765;
@@ -257,7 +259,8 @@ async function getSource(
         isDescribe = true;
     }
     const testLabel = test?.label;
-    const testPath = test?.uri!.fsPath;
+    const testPath = test?.uri!.fsPath
+        .replace(/\\/g, "/");
 
     return `
 # NOTE! This file has been generated automatically. Modification has no effect.
@@ -316,12 +319,12 @@ if (!IS_WHOLE_FILE_TEST) {
 library(devtools)
 devtools::load_all('${testReporterPath}')
 if (IS_DEBUG) {
-    .vsc.load_all('${vscode.workspace.workspaceFolders![0].uri.fsPath}')
+    .vsc.load_all('${workspaceFolder}')
     with_reporter(VSCodeReporter, {
         .vsc.debugSource('${testPath}')
     })
 } else {
-    devtools::load_all('${vscode.workspace.workspaceFolders![0].uri.fsPath}')
+    devtools::load_all('${workspaceFolder}')
     devtools::${devtoolsMethod}('${testPath}', reporter=VSCodeReporter)
 }
 `;
