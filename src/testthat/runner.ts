@@ -194,12 +194,20 @@ async function executeTest(
     testingTools.log.info(`Running test file in path ${filePath} in working directory ${cwd}`);
     const server = net.createServer();
 
-    server.on("connection", sock => {
-        sock.setEncoding("utf8");
-        sock.pipe(split())
+    server.on("connection", socket => {
+        socket.setEncoding("utf8");
+        socket.pipe(split())
             .on("data", (line: string) => server.emit("data", line))
             .on("end", () => server.emit("end"))
-            .on("error", (err: any) => server.emit("error", err));
+            .on("error", (err: any) => {
+                if (err.message === 'ECONNRESET') {
+                    // ECONNRESET gets emitted when the R process exits and the socket is closed,.
+                    // it's expected behavior, so we just ignore it.
+                    server.emit("end")
+                } else {
+                    server.emit("error", err);
+                }
+            })
     });
     server.listen(PORT, HOST, () => {
         console.log(`Listening on ${HOST}:${PORT}`)
