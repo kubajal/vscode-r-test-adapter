@@ -31,15 +31,11 @@ export async function testthatEntryPoint(
     };
     let devtoolsMethod = major == 2 && minor < 4 ? "test_file" : "test_active_file";
 
-    let isDescribe = false;
-    // This if statement sanitizes the 'test' argument.
-    // 1) for describe(...) tests: retrieve the describe() expression, if the original test is an it(...) expression
-    // 2) for test_that(...) tests:  does nothing
-    if (test.parent != undefined && test.parent.parent != undefined) {
+    let selectors: string[] = [];
+    while (test.parent != undefined) {
+        selectors = selectors.concat([test?.label]);
         test = test.parent;
-        isDescribe = true;
     }
-    const testLabel = test?.label;
     const testPath = test?.uri!.fsPath
         .replace(/\\/g, "/");
 
@@ -52,50 +48,15 @@ export async function testthatEntryPoint(
 
 # Entry point for the '${test.id}' test follows...
 
-TEST_THAT <- "test_that"
-DESCRIBE <- "describe"
-IS_DESCRIBE <- ${Number(isDescribe)}
 IS_DEBUG <- ${Number(isDebug)}
-IS_WHOLE_FILE_TEST <- ${Number(isWholeFile)}
 
-testthat <- loadNamespace('testthat')
-new_describe <- function(...) { }
-new_test_that <- function(...) { }
-
-if (!IS_WHOLE_FILE_TEST) {
-    if (IS_DESCRIBE) {
-        orig_describe <- testthat::describe
-        new_describe <- function(desc, ...) {
-            if ('${testLabel}' == desc) {
-                orig_describe(desc, ...)
-            }
-        }
-
-    } else {
-        orig_test_that <- testthat::test_that
-        new_test_that <- function(desc, ...) {
-            if ('${testLabel}' == desc) {
-                orig_test_that(desc, ...)
-            }
-        }
-    }
-
-    unlockBinding(DESCRIBE, testthat)
-    assignInNamespace(DESCRIBE, new_describe, ns = 'testthat')
-    assign(DESCRIBE, new_describe, envir = .GlobalEnv)
-    lockBinding(DESCRIBE, testthat)
-
-    unlockBinding(TEST_THAT, testthat)
-    assignInNamespace(TEST_THAT, new_test_that, ns = 'testthat')
-    assign(TEST_THAT, new_test_that, envir = .GlobalEnv)
-    lockBinding(TEST_THAT, testthat)
-
-}
+devtools::load_all('${testReporterPath}')
 
 library(devtools)
-devtools::load_all('${testReporterPath}')
 if (IS_DEBUG) {
     .vsc.load_all('${workspaceFolder}')
+    print(the$selected_description)
+    the$selected_description <- c(${selectors.map((x) => `"^${x}$"`).join(", ")})
     with_reporter(VSCodeReporter, {
         .vsc.debugSource('${testPath}')
     })
