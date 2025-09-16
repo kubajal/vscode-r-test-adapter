@@ -1,0 +1,19 @@
+Package: discovertestsreporter
+Title: 'testthat' Test Reporter for 'Discover Tests' Reporter
+Version: 0.0.1
+Date: 2025-08-31
+Authors@R: 
+    c(person(given = "Jakub",
+           family = "Jalowiec",
+           role = c("aut"),
+           email = "kuba.jalowiec@protonmail.com",
+           comment = c(ORCID = "0000-0001-9301-0651")),
+Description: A test reporter of 'testthat' package for discovering tests.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports: 
+    rlang,
+    testthat (>= 3.0.0),
+    withr
+Config/testthat/edition: 3
